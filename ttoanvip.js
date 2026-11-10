@@ -1,10 +1,7 @@
 /* =====================================================================
- *  DENIUS SUNVIP API — Gemini Interactions API Edition
- *  Endpoint: https://generativelanguage.googleapis.com/v1beta/interactions
+ *  DENIUS SUNVIP API — Gemini AI Edition (FULL & FIXED)
+ *  Endpoint: https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent
  *  Auth: x-goog-api-key
- *  Model: gemini-3.8-flash (default)
- *  Thinking: high
- *  Structured Output: response_format + JSON schema
  * ===================================================================== */
 
 const express = require('express');
@@ -31,13 +28,12 @@ const SOURCE_API =
   process.env.SOURCE_API ||
   'https://kwinstore.com/sunwin/tx/history/c806cf04a7fdf1cace25db6c7a8bdd8e048242145ee726dc';
 
-// ==================== GEMINI INTERACTIONS API CONFIG ====================
+// ==================== GEMINI API CONFIG ====================
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
 
-// ✅ Interactions API endpoint — KHÔNG dùng generateContent
-const GEMINI_INTERACTIONS_URL =
-  'https://generativelanguage.googleapis.com/v1beta/interactions';
+// ✅ Endpoint chuẩn của Gemini generateContent API
+const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 
 // Timeout / Cache / Limits
 const SOURCE_CACHE_MS = 750;
@@ -63,11 +59,11 @@ let sourceCache = {
 };
 
 const aiCache = new Map(); // targetSession -> { prediction, ..., at }
-const selfAuditLog = []; // lịch sử đối chiếu prediction vs actual
+const selfAuditLog = []; // Lịch sử đối chiếu prediction vs actual
 let lastGeminiError = null;
 
 // =====================================================================
-//              PHẦN 1: PARSE DỮ LIỆU NGUỒN (giữ nguyên)
+//              PHẦN 1: PARSE DỮ LIỆU NGUỒN
 // =====================================================================
 
 function asNumber(value) {
@@ -299,7 +295,6 @@ function buildMultiWindowContext(history) {
     const taiCount = slice.filter((x) => x.result === 'Tài').length;
     const xiuCount = size - taiCount;
 
-    // Bệt detection
     let maxTaiStreak = 0;
     let maxXiuStreak = 0;
     let currentStreak = 0;
@@ -318,7 +313,6 @@ function buildMultiWindowContext(history) {
       }
     }
 
-    // Tổng điểm
     const sums = slice.map((x) => x.total);
     const avgSum = sums.reduce((a, b) => a + b, 0) / sums.length;
 
@@ -334,7 +328,7 @@ function buildMultiWindowContext(history) {
 }
 
 // =====================================================================
-//              PHẦN 4: GEMINI INTERACTIONS API
+//              PHẦN 4: GEMINI PROMPT BUILDER
 // =====================================================================
 
 function buildPrompt(history, targetSession) {
@@ -342,13 +336,11 @@ function buildPrompt(history, targetSession) {
   const multiWindow = buildMultiWindowContext(window);
   const dataWindow = window.length;
 
-  // Chi tiết từng phiên (chỉ 50 phiên gần nhất để tiết kiệm token)
   const detailWindow = window.slice(-50);
   const detail = detailWindow
     .map((x) => `#${x.session} ${x.dice.join('-')} (${x.total}) ${x.result}`)
     .join('\n');
 
-  // Self-audit context
   const recentAudit = selfAuditLog.slice(-10);
   let auditContext = '';
   if (recentAudit.length > 0) {
@@ -391,19 +383,7 @@ Yêu cầu nghiêm ngặt:
 - Phải ghi rõ doubt nếu tín hiệu mâu thuẫn
 - Nếu tín hiệu yếu, confidence phải thấp
 - confidence KHÔNG phải xác suất thắng thực tế
-- Trả về JSON đúng schema, không markdown
-
-=== SCHEMA JSON ===
-{
-  "prediction": "Tài" hoặc "Xỉu",
-  "confidence": số nguyên 50-95,
-  "stance": "NGHIÊNG" / "CHẮC CHẮN" / "NGHI NGỜ" / "TRUNG LẬP",
-  "signal": "tín hiệu chính (ngắn gọn)",
-  "analysis": "phân tích chi tiết đa tầng",
-  "doubt": "điều bạn nghi ngờ, tín hiệu phản chứng",
-  "patterns": ["pattern 1", "pattern 2", ...],
-  "data_window": ${dataWindow}
-}`;
+- Trả về JSON đúng schema, không markdown wrapper ngoài JSON.`;
 }
 
 // =====================================================================
@@ -411,44 +391,16 @@ Yêu cầu nghiêm ngặt:
 // =====================================================================
 
 const AI_RESPONSE_SCHEMA = {
-  type: 'object',
+  type: 'OBJECT',
   properties: {
-    prediction: {
-      type: 'string',
-      enum: ['Tài', 'Xỉu'],
-      description: 'Dự đoán cuối cùng: Tài hoặc Xỉu'
-    },
-    confidence: {
-      type: 'integer',
-      minimum: 50,
-      maximum: 95,
-      description: 'Độ tin cậy 50-95, không phải xác suất thắng'
-    },
-    stance: {
-      type: 'string',
-      description: 'Thái độ: NGHIÊNG, CHẮC CHẮN, NGHI NGỜ, TRUNG LẬP'
-    },
-    signal: {
-      type: 'string',
-      description: 'Tín hiệu chính dẫn đến dự đoán'
-    },
-    analysis: {
-      type: 'string',
-      description: 'Phân tích chi tiết đa tầng'
-    },
-    doubt: {
-      type: 'string',
-      description: 'Điều nghi ngờ, tín hiệu phản chứng'
-    },
-    patterns: {
-      type: 'array',
-      items: { type: 'string' },
-      description: 'Các pattern phát hiện được'
-    },
-    data_window: {
-      type: 'integer',
-      description: 'Số phiên đã phân tích'
-    }
+    prediction: { type: 'STRING', description: 'Tài hoặc Xỉu' },
+    confidence: { type: 'INTEGER', description: 'Độ tin cậy 50-95' },
+    stance: { type: 'STRING', description: 'NGHIÊNG / CHẮC CHẮN / NGHI NGỜ / TRUNG LẬP' },
+    signal: { type: 'STRING', description: 'Tín hiệu chính' },
+    analysis: { type: 'STRING', description: 'Phân tích chi tiết' },
+    doubt: { type: 'STRING', description: 'Ý kiến phản chứng' },
+    patterns: { type: 'ARRAY', items: { type: 'STRING' }, description: 'Các pattern' },
+    data_window: { type: 'INTEGER', description: 'Số phiên phân tích' }
   },
   required: [
     'prediction',
@@ -463,72 +415,7 @@ const AI_RESPONSE_SCHEMA = {
 };
 
 // =====================================================================
-//              PHẦN 6: EXTRACT TEXT TỪ INTERACTIONS RESPONSE
-// =====================================================================
-
-/**
- * Trích xuất text từ Interactions API response.
- * Ưu tiên output_text, sau đó steps/outputs.
- * KHÔNG dùng candidates[0].content.parts (style generateContent cũ).
- */
-function extractInteractionText(data) {
-  if (!data || typeof data !== 'object') return null;
-
-  // Ưu tiên 1: output_text (string)
-  if (typeof data.output_text === 'string' && data.output_text.trim()) {
-    return data.output_text.trim();
-  }
-
-  // Ưu tiên 2: steps array (schema mới)
-  if (Array.isArray(data.steps)) {
-    const textParts = [];
-    for (const step of data.steps) {
-      if (step?.type === 'model_output' && Array.isArray(step.content)) {
-        for (const block of step.content) {
-          if (block?.type === 'text' && typeof block.text === 'string') {
-            textParts.push(block.text);
-          }
-        }
-      }
-      // Một số response có thể có content trực tiếp
-      if (Array.isArray(step?.content)) {
-        for (const block of step.content) {
-          if (block?.type === 'text' && typeof block.text === 'string') {
-            if (!textParts.includes(block.text)) textParts.push(block.text);
-          }
-        }
-      }
-    }
-    if (textParts.length > 0) return textParts.join('');
-  }
-
-  // Ưu tiên 3: outputs array (schema cũ hơn, trước breaking change)
-  if (Array.isArray(data.outputs)) {
-    const textParts = [];
-    for (const out of data.outputs) {
-      if (out?.type === 'text' && typeof out.text === 'string') {
-        textParts.push(out.text);
-      }
-    }
-    if (textParts.length > 0) return textParts.join('');
-  }
-
-  // Ưu tiên 4: tìm trong các field có thể
-  if (Array.isArray(data.content)) {
-    const textParts = [];
-    for (const block of data.content) {
-      if (block?.type === 'text' && typeof block.text === 'string') {
-        textParts.push(block.text);
-      }
-    }
-    if (textParts.length > 0) return textParts.join('');
-  }
-
-  return null;
-}
-
-// =====================================================================
-//              PHẦN 7: VALIDATE AI RESULT
+//              PHẦN 6: VALIDATE AI RESULT
 // =====================================================================
 
 function validateAIResult(data) {
@@ -551,22 +438,22 @@ function validateAIResult(data) {
 }
 
 // =====================================================================
-//              PHẦN 8: GỌI GEMINI INTERACTIONS API
+//              PHẦN 7: GỌI GEMINI STANDARD API (generateContent)
 // =====================================================================
 
-async function callGeminiInteractions(prompt) {
+async function callGeminiAPI(prompt) {
   const body = {
-    model: GEMINI_MODEL,
-    input: prompt,
-    store: false,
-    generation_config: {
-      max_output_tokens: 8192,
-      thinking_level: 'high'
-    },
-    response_format: {
-      type: 'text',
-      mime_type: 'application/json',
-      schema: AI_RESPONSE_SCHEMA
+    contents: [
+      {
+        role: 'user',
+        parts: [{ text: prompt }]
+      }
+    ],
+    generationConfig: {
+      temperature: 0.2,
+      maxOutputTokens: 8192,
+      responseMimeType: 'application/json',
+      responseSchema: AI_RESPONSE_SCHEMA
     }
   };
 
@@ -574,12 +461,10 @@ async function callGeminiInteractions(prompt) {
   const timer = setTimeout(() => controller.abort(), AI_TIMEOUT_MS);
 
   try {
-    const res = await fetch(GEMINI_INTERACTIONS_URL, {
+    const res = await fetch(`${GEMINI_API_URL}?key=${GEMINI_API_KEY}`, {
       method: 'POST',
       headers: {
-        'content-type': 'application/json',
-        // ✅ ĐÚNG cho Gemini API key: x-goog-api-key
-        'x-goog-api-key': GEMINI_API_KEY
+        'Content-Type': 'application/json'
       },
       body: JSON.stringify(body),
       signal: controller.signal
@@ -588,16 +473,10 @@ async function callGeminiInteractions(prompt) {
     if (!res.ok) {
       const errText = await res.text().catch(() => '');
       let errMsg = errText.slice(0, 500);
-
       try {
         const errJson = JSON.parse(errText);
-        errMsg =
-          errJson?.error?.message ||
-          errJson?.message ||
-          errMsg;
-      } catch {
-        // giữ nguyên text
-      }
+        errMsg = errJson?.error?.message || errMsg;
+      } catch {}
 
       const err = new Error(`AI_HTTP_${res.status}: ${errMsg}`);
       err.status = res.status;
@@ -605,17 +484,12 @@ async function callGeminiInteractions(prompt) {
     }
 
     const data = await res.json();
-
-    // Trích xuất text từ Interactions response
-    const text = extractInteractionText(data);
+    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
 
     if (!text) {
-      throw new Error(
-        'AI_EMPTY_RESPONSE: ' + JSON.stringify(data).slice(0, 400)
-      );
+      throw new Error('AI_EMPTY_RESPONSE: ' + JSON.stringify(data).slice(0, 300));
     }
 
-    // Parse JSON
     let parsed;
     try {
       parsed = JSON.parse(text);
@@ -635,20 +509,14 @@ async function callGeminiInteractions(prompt) {
 }
 
 // =====================================================================
-//              PHẦN 9: RETRY LOGIC
+//              PHẦN 8: RETRY LOGIC
 // =====================================================================
 
 function shouldRetry(error) {
   const status = error?.status;
-  // KHÔNG retry 401, 403 — authentication/config error
-  if (status === 401 || status === 403) return false;
-  // KHÔNG retry 400, 404 — request/model error
-  if (status === 400 || status === 404) return false;
-  // Retry 429, 500, 502, 503
+  if (status === 401 || status === 403 || status === 400 || status === 404) return false;
   if (status === 429 || status >= 500) return true;
-  // Retry timeout / network
-  if (error?.name === 'AbortError') return true;
-  if (error?.message?.includes('fetch failed')) return true;
+  if (error?.name === 'AbortError' || error?.message?.includes('fetch failed')) return true;
   return false;
 }
 
@@ -656,16 +524,12 @@ async function callAIWithRetry(prompt) {
   let lastError;
   for (let attempt = 0; attempt <= AI_MAX_RETRIES; attempt++) {
     try {
-      const result = await callGeminiInteractions(prompt);
+      const result = await callGeminiAPI(prompt);
       lastGeminiError = null;
       return result;
     } catch (err) {
       lastError = err;
-
-      // Log kỹ thuật (không log key)
-      console.error(
-        `[GEMINI] attempt ${attempt + 1}/${AI_MAX_RETRIES + 1} failed: ${err.message}`
-      );
+      console.error(`[GEMINI] attempt ${attempt + 1}/${AI_MAX_RETRIES + 1} failed: ${err.message}`);
 
       if (!shouldRetry(err) || attempt === AI_MAX_RETRIES) break;
 
@@ -680,11 +544,10 @@ async function callAIWithRetry(prompt) {
 }
 
 // =====================================================================
-//              PHẦN 10: AI PREDICTION + CACHE + SELF-AUDIT
+//              PHẦN 9: CACHE & SELF-AUDIT
 // =====================================================================
 
 async function getAIPrediction(history, targetSession) {
-  // Cache check
   const cached = aiCache.get(targetSession);
   if (cached && Date.now() - cached.at < AI_CACHE_TTL_MS) {
     return cached;
@@ -701,7 +564,6 @@ async function getAIPrediction(history, targetSession) {
 
   aiCache.set(targetSession, entry);
 
-  // Giới hạn cache
   if (aiCache.size > AI_CACHE_MAX_ENTRIES) {
     const keys = Array.from(aiCache.keys());
     const removeCount = aiCache.size - AI_CACHE_MAX_ENTRIES;
@@ -713,11 +575,7 @@ async function getAIPrediction(history, targetSession) {
   return entry;
 }
 
-/**
- * Ghi self-audit: so sánh prediction cũ vs actual result.
- */
 function recordSelfAudit(session, prediction, confidence, actual) {
-  // Tránh ghi trùng
   const exists = selfAuditLog.find((a) => a.session === session);
   if (exists) return;
 
@@ -730,58 +588,37 @@ function recordSelfAudit(session, prediction, confidence, actual) {
     timestamp: Date.now()
   });
 
-  // Giới hạn log
   if (selfAuditLog.length > 200) {
     selfAuditLog.splice(0, selfAuditLog.length - 200);
   }
 }
 
 // =====================================================================
-//              PHẦN 11: BUILD RESPONSE
+//              PHẦN 10: BUILD RESPONSE
 // =====================================================================
 
 async function buildTxResponse(history) {
   const latest = history[history.length - 1];
 
-  // === SELF-AUDIT: đối chiếu dự đoán phiên mới nhất ===
   if (history.length >= 2) {
     const ctxBefore = history.slice(0, -1);
     const prevSession = latest.session;
 
     try {
-      // Lấy prediction cũ từ cache (KHÔNG gọi AI lại)
       let oldDecision = aiCache.get(prevSession);
-
       if (oldDecision) {
-        // Có cache → ghi audit
-        recordSelfAudit(
-          prevSession,
-          oldDecision.prediction,
-          oldDecision.confidence,
-          latest.result
-        );
+        recordSelfAudit(prevSession, oldDecision.prediction, oldDecision.confidence, latest.result);
       } else {
-        // Không có cache → thử gọi AI với context trước đó
         try {
           oldDecision = await getAIPrediction(ctxBefore, prevSession);
-          recordSelfAudit(
-            prevSession,
-            oldDecision.prediction,
-            oldDecision.confidence,
-            latest.result
-          );
-        } catch {
-          // Bỏ qua nếu không lấy được
-          oldDecision = null;
-        }
+          recordSelfAudit(prevSession, oldDecision.prediction, oldDecision.confidence, latest.result);
+        } catch {}
       }
     } catch (e) {
-      // Không chặn response chính
       console.error('[SELF-AUDIT]', e.message);
     }
   }
 
-  // === DỰ ĐOÁN PHIÊN HIỆN TẠI ===
   const currentSession = latest.session + 1;
   let decision;
   try {
@@ -807,7 +644,7 @@ async function buildTxResponse(history) {
 }
 
 // =====================================================================
-//              PHẦN 12: ROUTES
+//              PHẦN 11: ROUTES
 // =====================================================================
 
 async function handleTx(req, res) {
@@ -916,12 +753,11 @@ app.get('/health', (req, res) => {
     gemini: {
       configured: Boolean(GEMINI_API_KEY),
       model: GEMINI_MODEL,
-      thinkingLevel: 'high',
       cachedPredictions: aiCache.size,
       historyLimit: AI_HISTORY_LIMIT,
       lastError: lastGeminiError,
       selfAuditEntries: selfAuditLog.length,
-      endpoint: GEMINI_INTERACTIONS_URL
+      endpoint: GEMINI_API_URL
     },
     uptime: Math.floor(process.uptime())
   });
@@ -936,13 +772,34 @@ app.use((req, res) =>
 );
 
 // =====================================================================
-//              KHỞI ĐỘNG
+//              PHẦN 12: GLOBAL ERROR HANDLER & LISTENERS
+// =====================================================================
+
+app.use((err, req, res, next) => {
+  console.error('[UNHANDLED_ERROR]', err.stack || err.message);
+  res.status(500).json({
+    success: false,
+    error: err.message || 'INTERNAL_SERVER_ERROR',
+    ADMIN
+  });
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[PROCESS] Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('[PROCESS] Uncaught Exception thrown:', err);
+});
+
+// =====================================================================
+//              KHỞI ĐỘNG SERVER
 // =====================================================================
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`[DENIUS-API-SUNVIP-AI] listening on ${PORT}`);
   console.log(
-    `[GEMINI] endpoint=${GEMINI_INTERACTIONS_URL} model=${GEMINI_MODEL} thinking=high historyLimit=${AI_HISTORY_LIMIT}`
+    `[GEMINI] endpoint=${GEMINI_API_URL} model=${GEMINI_MODEL} historyLimit=${AI_HISTORY_LIMIT}`
   );
 
   if (!GEMINI_API_KEY) {
